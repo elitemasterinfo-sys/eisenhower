@@ -1,0 +1,24 @@
+# Only the app itself goes to GitHub (the repo and site are public).
+# Notes, backups and anything secret stay on this PC: everything is ignored unless listed below.
+/*
+!/.gitignore
+!/.nojekyll
+!/index.html
+!/sw.js
+!/manifest.json
+!/qrcode.js
+!/icon-192.png
+!/icon-512.png
+!/README.md
+!/ONLINE_GUIDE.md
+!/open.bat
+!/open_on_mobile_and_wifi.bat
+!/fonts/
+/fonts/*
+!/fonts/vazirmatn-arabic.woff2
+!/fonts/vazirmatn-latin.woff2
+!/fonts/OFL.txt
+!/tools/
+/tools/*
+!/tools/backup-firebase.ps1
+!/tools/set-sync-code.bat
