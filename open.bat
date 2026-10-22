@@ -1,3 +1,4 @@
 @echo off
-start "" "%~dp0index.html"
+rem Opens the app from its home on GitHub Pages (works offline after the first visit)
+start "" "https://elitemasterinfo-sys.github.io/eisenhower/"
 exit
