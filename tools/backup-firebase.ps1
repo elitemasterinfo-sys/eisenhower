@@ -33,6 +33,11 @@ function Register-BackupTask {
 }
 
 if ($Setup) {
+    Write-Host ''
+    Write-Host '  Daily backup of the Eisenhower app'
+    Write-Host '  Paste the sync code (Firebase Database Secret) and press Enter.'
+    Write-Host '  It is saved encrypted; only this Windows user can read it.'
+    Write-Host ''
     $code = Read-Host 'Sync code (Database Secret)' -AsSecureString
     if ($code.Length -gt 0) {
         New-Item -ItemType Directory -Force $secretDir | Out-Null

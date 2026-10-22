@@ -22,3 +22,4 @@
 /tools/*
 !/tools/backup-firebase.ps1
 !/tools/set-sync-code.bat
+!/tools/serve_lan.py
