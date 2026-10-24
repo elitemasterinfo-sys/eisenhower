@@ -1,7 +1,7 @@
 // Service Worker for Eisenhower Matrix PWA
 // App files open from the cache at once and are refreshed in the background (fast start on a slow VPN, works offline).
 // Requests to other sites (Firebase, Telegram) are never touched.
-const CACHE_NAME = 'eisenhower-pwa-v5';
+const CACHE_NAME = 'eisenhower-pwa-v6';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -37,6 +37,8 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  // The shared-password file must always be the latest one, so it skips the cache
+  if (new URL(req.url).pathname.endsWith('/vault.json')) return;
 
   event.respondWith(
     caches.open(CACHE_NAME).then(async cache => {

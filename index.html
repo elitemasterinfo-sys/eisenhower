@@ -2569,8 +2569,26 @@
             <!-- TAB 3: Security & Login Password -->
             <div id="tabContentSecurity" style="display: none; flex-direction: column; gap: 14px;">
                 <div style="font-size: 0.84rem; line-height: 1.6; color: var(--text-main);">
-                    با <strong>قفل ورود</strong>، هر بار که مرورگر را باز کنی برنامه رمز می‌خواهد تا کسی که گوشی یا کامپیوترت دستش است تسک‌ها را نبیند. رمز فقط روی همین دستگاه و به شکل رمزنگاری‌شده (hash) ذخیره می‌شود.
+                    با <strong>قفل ورود</strong>، هر بار که مرورگر را باز کنی برنامه رمز می‌خواهد تا کسی که گوشی یا کامپیوترت دستش است تسک‌ها را نبیند.
                 </div>
+
+                <div style="display: flex; flex-direction: column; gap: 10px; background: var(--bg); padding: 14px; border-radius: 10px; border: 1px solid var(--border);">
+                    <div style="font-size: 0.88rem; font-weight: 800;">🔑 رمز واحد همه‌ی دستگاه‌ها</div>
+                    <div style="font-size: 0.78rem; line-height: 1.7; color: var(--text-main);">
+                        یک رمز برای همه‌جا: روی هر کامپیوتر یا گوشی لینک برنامه را باز می‌کنی، همین رمز را می‌زنی؛ برنامه باز می‌شود و سینک خودش روشن می‌شود. کد سینک و تنظیمات تلگرام با این رمز قفل می‌شوند و در فایل <code>vault.json</code> کنار برنامه می‌نشینند.
+                    </div>
+                    <div id="vaultStatusMsg" style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); line-height: 1.6;"></div>
+                    <label for="vaultPasswordInput" style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">رمز واحد تازه (دست‌کم ۱۲ کاراکتر):</label>
+                    <input type="password" id="vaultPasswordInput" class="quick-input" autocomplete="new-password" style="background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 10px 14px;">
+                    <label for="vaultPasswordRepeatInput" style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">تکرار رمز:</label>
+                    <input type="password" id="vaultPasswordRepeatInput" class="quick-input" autocomplete="new-password" style="background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 10px 14px;">
+                    <button class="btn btn-primary" onclick="createSharedPasswordVault()" style="justify-content: center;">🔑 ساخت رمز واحد و دانلود vault.json</button>
+                    <div style="font-size: 0.74rem; color: var(--text-muted); line-height: 1.6;">
+                        این دستگاه باید همین الان سینک باشد. فایل دانلودشده را کنار <code>index.html</code> در مخزن eisenhower بگذار. برای عوض کردن رمز، رمز تازه بساز و فایل تازه را جایگزین کن. رمز ساده انتخاب نکن: فایل قفل‌شده روی اینترنت عمومی است.
+                    </div>
+                </div>
+
+                <div id="securityLocalBox" style="display: flex; flex-direction: column; gap: 14px;">
 
                 <div id="securityPublicNotice" style="display: none; background: var(--q1-soft); border: 1px solid var(--q1); border-radius: 10px; padding: 10px 14px; font-size: 0.8rem; line-height: 1.6; color: var(--text-main);">
                     ⚠️ <strong>رمز فعلی قفل در اینترنت عمومی شده بود.</strong> یک رمز تازه در کادر پایین بنویس و «ذخیره همه تنظیمات» را بزن.
@@ -2586,6 +2604,7 @@
                 <div style="display: flex; flex-direction: column; gap: 6px;">
                     <label for="securityPasswordInput" style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">رمز تازه‌ی قفل:</label>
                     <input type="password" id="securityPasswordInput" class="quick-input" autocomplete="new-password" style="background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 10px 14px;" placeholder="خالی بگذاری، رمز فعلی می‌ماند">
+                </div>
                 </div>
 
                 <div style="background: rgba(88, 166, 255, 0.08); border: 1px solid rgba(88, 166, 255, 0.2); border-radius: 10px; padding: 12px 14px; font-size: 0.78rem; color: var(--text-main); line-height: 1.6;">
@@ -2921,6 +2940,8 @@
         const UNLOCKED_SESSION_KEY = 'eisenhower_session_unlocked';
         const SNAPSHOTS_KEY = 'eisenhower_backup_snapshots';
         const SYNC_BASE_KEY = 'eisenhower_sync_base';
+        const VAULT_CACHE_KEY = 'eisenhower_vault'; // last vault.json seen, so the lock works offline and opens without a flash
+        const VAULT_ITERATIONS = 600000;
         const DEFAULT_CLOUD_URL = 'https://task-manager-c285d-default-rtdb.firebaseio.com';
         const APP_PUBLIC_URL = 'https://elitemasterinfo-sys.github.io/eisenhower/';
         const QUADS = ['q1', 'q2', 'q3', 'q4'];
@@ -2934,6 +2955,7 @@
         let securityHash = localStorage.getItem(SECURITY_HASH_KEY) || '';
         let legacyPlainPassword = localStorage.getItem(SECURITY_PWD_KEY) || '';
         let isSecurityEnabled = localStorage.getItem(SECURITY_ENABLED_KEY) !== 'false';
+        let cachedVault = loadCachedVault();
         let currentFilter = 'all';
         let currentSearchQuery = '';
         let currentEditingTaskId = null;
@@ -3117,6 +3139,7 @@
             initTheme();
             checkSecurityLock();
             migrateLegacyPassword();
+            refreshVault();
             attachListDropEvents();
             render();
             updateAiStatusUI();
@@ -5051,7 +5074,9 @@
         function syncHeartbeat() {
             if (document.hidden || !getCloudEndpoint()) return;
             const streamAlive = cloudEventSource && cloudEventSource.readyState === 1 && Date.now() - lastStreamEventAt < 75000;
-            if (Date.now() - lastSyncAttemptAt > (streamAlive ? 60000 : 15000)) requestSync(0);
+            // Without a sync code the database only ever answers "locked": ask rarely instead of every 15 s
+            const every = (syncStatus === 'locked' && !cloudSyncSecret) ? 300000 : (streamAlive ? 60000 : 15000);
+            if (Date.now() - lastSyncAttemptAt > every) requestSync(0);
         }
 
         async function syncNow() {
@@ -5503,9 +5528,182 @@
             if (el) el.style.display = localStorage.getItem(SECURITY_PUBLIC_PWD_KEY) === 'true' ? 'block' : 'none';
         }
 
+        // ================= SHARED PASSWORD (vault.json) =================
+        // vault.json sits next to the app and holds the sync code and Telegram settings, locked with the one shared
+        // password (PBKDF2-SHA256 → AES-GCM). Any device that knows the password opens the app and starts syncing.
+        function bytesToB64(bytes) {
+            return btoa(String.fromCharCode.apply(null, bytes));
+        }
+
+        function b64ToBytes(s) {
+            return Uint8Array.from(atob(s), ch => ch.charCodeAt(0));
+        }
+
+        function isVaultShape(v) {
+            return !!v && v.v === 1 && typeof v.salt === 'string' && typeof v.iv === 'string' && typeof v.ct === 'string'
+                && Number.isInteger(v.iter) && v.iter >= 100000 && v.iter <= 10000000;
+        }
+
+        function loadCachedVault() {
+            try {
+                const v = JSON.parse(localStorage.getItem(VAULT_CACHE_KEY) || 'null');
+                return isVaultShape(v) ? v : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function vaultUsable() {
+            return !!(cachedVault && window.crypto && crypto.subtle);
+        }
+
+        async function deriveVaultKey(password, salt, iterations) {
+            const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(normalizePasswordInput(password)), 'PBKDF2', false, ['deriveKey']);
+            return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: salt, iterations: iterations, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+        }
+
+        async function sealVault(password, payload) {
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const key = await deriveVaultKey(password, salt, VAULT_ITERATIONS);
+            const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, new TextEncoder().encode(JSON.stringify(payload)));
+            return { v: 1, kdf: 'PBKDF2-SHA256', iter: VAULT_ITERATIONS, salt: bytesToB64(salt), iv: bytesToB64(iv), ct: bytesToB64(new Uint8Array(ct)), createdAt: new Date().toISOString() };
+        }
+
+        // A wrong password fails the AES-GCM check, so null means "wrong password"
+        async function openVault(v, password) {
+            try {
+                const key = await deriveVaultKey(password, b64ToBytes(v.salt), v.iter);
+                const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToBytes(v.iv) }, key, b64ToBytes(v.ct));
+                const p = JSON.parse(new TextDecoder().decode(plain));
+                return p && typeof p === 'object' ? p : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // The shared password also becomes this device's local password (used where crypto.subtle is missing, e.g. the Wi-Fi server)
+        async function applyVaultPayload(p, password) {
+            securityHash = await hashPassword(password);
+            legacyPlainPassword = '';
+            localStorage.setItem(SECURITY_HASH_KEY, securityHash);
+            localStorage.removeItem(SECURITY_PWD_KEY);
+            localStorage.removeItem(SECURITY_PUBLIC_PWD_KEY);
+            if (p.t && p.t !== tgBotToken) {
+                tgBotToken = p.t;
+                localStorage.setItem(TG_BOT_TOKEN_KEY, p.t);
+            }
+            if (p.c && p.c !== tgChatId) {
+                tgChatId = p.c;
+                localStorage.setItem(TG_CHAT_ID_KEY, p.c);
+            }
+            if (p.s && (p.s !== cloudSyncSecret || (p.url && p.url !== cloudSyncUrl))) {
+                applyCloudSettings(p.url || cloudSyncUrl, p.s);
+            }
+            requestSync(0);
+        }
+
+        async function refreshVault() {
+            let res;
+            try {
+                res = await fetch('vault.json', { cache: 'no-store' });
+            } catch (e) {
+                return;
+            }
+            if (res.status === 404) {
+                if (cachedVault) {
+                    cachedVault = null;
+                    localStorage.removeItem(VAULT_CACHE_KEY);
+                    updateVaultUI();
+                }
+                return;
+            }
+            if (!res.ok) return;
+            let v;
+            try {
+                v = await res.json();
+            } catch (e) {
+                return;
+            }
+            if (!isVaultShape(v)) return;
+            const raw = JSON.stringify(v);
+            if (raw === localStorage.getItem(VAULT_CACHE_KEY)) return;
+            cachedVault = v;
+            localStorage.setItem(VAULT_CACHE_KEY, raw);
+            // A new shared password was published: this device asks for it too
+            sessionStorage.removeItem(UNLOCKED_SESSION_KEY);
+            checkSecurityLock();
+            updateVaultUI();
+        }
+
+        function updateVaultUI() {
+            const msg = document.getElementById('vaultStatusMsg');
+            const localBox = document.getElementById('securityLocalBox');
+            if (localBox) localBox.style.display = vaultUsable() ? 'none' : 'flex';
+            if (!msg) return;
+            if (cachedVault) {
+                const when = cachedVault.createdAt ? ` (ساخته‌شده ${formatClock(Date.parse(cachedVault.createdAt))})` : '';
+                msg.innerText = `✅ رمز واحد فعال است${when}. روی هر دستگاه همین لینک را باز کن و همین رمز را بزن؛ سینک خودش روشن می‌شود.`;
+            } else {
+                msg.innerText = 'رمز واحد هنوز منتشر نشده؛ فعلاً رمز و کد سینک هر دستگاه جداست.';
+            }
+        }
+
+        async function createSharedPasswordVault() {
+            const p1Input = document.getElementById('vaultPasswordInput');
+            const p2Input = document.getElementById('vaultPasswordRepeatInput');
+            const p1 = normalizePasswordInput(p1Input.value);
+            const p2 = normalizePasswordInput(p2Input.value);
+            if (!(window.crypto && crypto.subtle)) {
+                showToast('رمز واحد فقط روی لینک اصلی برنامه (https) ساخته می‌شود.', 'error');
+                return;
+            }
+            if (p1.length < 12) {
+                showToast('رمز واحد باید دست‌کم ۱۲ کاراکتر باشد.', 'error');
+                return;
+            }
+            if (p1 !== p2) {
+                showToast('دو رمز با هم یکی نیستند.', 'error');
+                return;
+            }
+            if (!cloudSyncSecret) {
+                showToast('اول کد سینک را در تب همگام‌سازی وارد کن تا همین دستگاه وصل باشد.', 'error');
+                return;
+            }
+            await runSync();
+            if (syncStatus !== 'online') {
+                showToast('کد سینک فعلی وصل نمی‌شود؛ اول همگام‌سازی را درست کن، بعد رمز واحد بساز.', 'error');
+                return;
+            }
+            const vault = await sealVault(p1, { v: 1, url: cloudSyncUrl, s: cloudSyncSecret, t: tgBotToken, c: tgChatId });
+            cachedVault = vault;
+            localStorage.setItem(VAULT_CACHE_KEY, JSON.stringify(vault));
+            await applyVaultPayload({}, p1);
+            sessionStorage.setItem(UNLOCKED_SESSION_KEY, 'true');
+            p1Input.value = '';
+            p2Input.value = '';
+
+            const blob = new Blob([JSON.stringify(vault, null, 2) + '\n'], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'vault.json';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+            updateVaultUI();
+            showToast('فایل vault.json دانلود شد. آن را کنار index.html در مخزن eisenhower بگذار تا روی همه‌ی دستگاه‌ها کار کند.', 'success');
+        }
+
+        function lockRequired() {
+            return vaultUsable() || (isSecurityEnabled && hasLockPassword());
+        }
+
         function checkSecurityLock() {
             const overlay = document.getElementById('loginLockOverlay');
-            if (isSecurityEnabled && hasLockPassword() && sessionStorage.getItem(UNLOCKED_SESSION_KEY) !== 'true') {
+            if (lockRequired() && sessionStorage.getItem(UNLOCKED_SESSION_KEY) !== 'true') {
                 overlay.style.display = 'flex';
                 document.getElementById('loginPassInput').value = '';
                 document.getElementById('loginErrorMsg').style.display = 'none';
@@ -5515,12 +5713,28 @@
             overlay.style.display = 'none';
         }
 
+        let unlockBusy = false;
         async function attemptUnlock() {
+            if (unlockBusy) return;
             const input = document.getElementById('loginPassInput');
             const err = document.getElementById('loginErrorMsg');
             const rawVal = input ? input.value : '';
             if (legacyPlainPassword) await migrateLegacyPassword();
-            const ok = !!securityHash && (await hashPassword(rawVal)) === securityHash;
+            let ok = false;
+            if (vaultUsable()) {
+                unlockBusy = true;
+                try {
+                    const payload = await openVault(cachedVault, rawVal);
+                    if (payload) {
+                        await applyVaultPayload(payload, rawVal);
+                        ok = true;
+                    }
+                } finally {
+                    unlockBusy = false;
+                }
+            } else {
+                ok = !!securityHash && (await hashPassword(rawVal)) === securityHash;
+            }
 
             if (ok) {
                 sessionStorage.setItem(UNLOCKED_SESSION_KEY, 'true');
@@ -5543,7 +5757,7 @@
         }
 
         function lockAppNow() {
-            if (!isSecurityEnabled || !hasLockPassword()) {
+            if (!lockRequired()) {
                 openSettingsModal();
                 switchSettingsTab('security', document.querySelectorAll('.modal-tab-btn')[2]);
                 showToast('لطفاً ابتدا یک رمز عبور در تب امنیت تنظیم کنید.', 'info');
@@ -5567,6 +5781,7 @@
                 document.getElementById('tgEnabledInput').checked = isTgEnabled;
             }
             updateSecurityNotice();
+            updateVaultUI();
             renderSnapshotList();
             updateCloudUI();
             document.getElementById('settingsModal').classList.add('active');

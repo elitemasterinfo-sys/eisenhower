@@ -10,6 +10,8 @@
 !/icon-192.png
 !/icon-512.png
 !/README.md
+# The sync code locked with the shared password (AES-GCM); never the code itself
+!/vault.json
 !/ONLINE_GUIDE.md
 !/open.bat
 !/open_on_mobile_and_wifi.bat
