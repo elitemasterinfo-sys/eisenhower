@@ -2501,7 +2501,7 @@
             <!-- TAB 2: Cloud Sync (Firebase / REST) -->
             <div id="tabContentCloud" style="display: none; flex-direction: column; gap: 14px;">
                 <div style="font-size: 0.84rem; line-height: 1.6; color: var(--text-main);">
-                    تسک‌ها بین همه‌ی کامپیوترها و گوشی از طریق <strong>Google Firebase Realtime Database</strong> همگام می‌شوند. هر دستگاه قبل از نوشتن، نسخه‌ی ابری را با نسخه‌ی خودش <strong>ادغام</strong> می‌کند؛ قطع اینترنت یا کار هم‌زمان روی دو دستگاه هیچ تسکی را پاک نمی‌کند.
+                    تسک‌ها بین همه‌ی کامپیوترها و گوشی از طریق <strong>Google Firebase Realtime Database</strong> همگام می‌شوند. هر دستگاه قبل از نوشتن، نسخه‌ی ابری را با نسخه‌ی خودش <strong>ادغام</strong> می‌کند؛ قطع اینترنت یا کار هم‌زمان روی دو دستگاه هیچ تسکی را پاک نمی‌کند. کلید هوش مصنوعی و تنظیمات ربات تلگرام هم با همین سینک روی همه‌ی دستگاه‌ها می‌روند؛ یک بار وارد کن کافی است.
                 </div>
 
                 <div style="display: flex; flex-direction: column; gap: 6px;">
@@ -2942,6 +2942,7 @@
         const SYNC_BASE_KEY = 'eisenhower_sync_base';
         const VAULT_CACHE_KEY = 'eisenhower_vault'; // last vault.json seen, so the lock works offline and opens without a flash
         const VAULT_ITERATIONS = 600000;
+        const SETTINGS_META_KEY = 'eisenhower_settings_meta'; // when each synced setting was last changed: { name: timestamp }
         const DEFAULT_CLOUD_URL = 'https://task-manager-c285d-default-rtdb.firebaseio.com';
         const APP_PUBLIC_URL = 'https://elitemasterinfo-sys.github.io/eisenhower/';
         const QUADS = ['q1', 'q2', 'q3', 'q4'];
@@ -2972,7 +2973,8 @@
             window.addEventListener('load', () => {
                 const hadController = !!navigator.serviceWorker.controller;
                 navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(reg => {
-                    reg.update();
+                    // Fails harmlessly when the page is closed or reloaded mid-check; the next load checks again
+                    reg.update().catch(() => {});
                 }).catch(err => {
                     console.warn('PWA ServiceWorker registration error:', err);
                 });
@@ -4344,7 +4346,7 @@
         const TG_CHAT_ID_KEY = 'eisenhower_tg_chat_id';
         const TG_ENABLED_KEY = 'eisenhower_tg_enabled';
 
-        // The bot token and chat id are entered once per device in Settings (or arrive with the setup QR), never written in code
+        // The bot token and chat id are entered once in Settings on any device and reach the others with the settings sync, never written in code
         let tgBotToken = localStorage.getItem(TG_BOT_TOKEN_KEY) || '';
         let tgChatId = localStorage.getItem(TG_CHAT_ID_KEY) || '';
         let isTgEnabled = localStorage.getItem(TG_ENABLED_KEY) !== null ? (localStorage.getItem(TG_ENABLED_KEY) === 'true') : true;
@@ -4990,6 +4992,7 @@
                         if (mergedCanon === canonList(remote.list) || await putCloudTasks(mergedJson, remote.etag)) {
                             saveSyncBase(mergedJson);
                             setSyncStatus('online');
+                            maybeSyncSettings();
                             return;
                         }
                         // 412: another device wrote first; read again and merge with its change
@@ -5007,6 +5010,121 @@
                 }
             })();
             return syncInFlight;
+        }
+
+        // ================= SETTINGS SYNC =================
+        // API keys and Telegram settings live next to the tasks in the (locked) cloud database, so a key entered on
+        // one device works on all of them. Each setting carries the time it was last changed and the newest one wins.
+        // The sync code itself cannot live there: it comes from vault.json.
+        const SYNCED_SETTINGS = {
+            gemini: { get: () => geminiApiKey, set: v => { geminiApiKey = v; localStorage.setItem(GEMINI_KEY_STORAGE, v); } },
+            tgToken: { get: () => tgBotToken, set: v => { tgBotToken = v; tgTokenWarned = false; localStorage.setItem(TG_BOT_TOKEN_KEY, v); } },
+            tgChat: { get: () => tgChatId, set: v => { tgChatId = v; localStorage.setItem(TG_CHAT_ID_KEY, v); } },
+            tgEnabled: { get: () => isTgEnabled ? 'true' : 'false', set: v => { isTgEnabled = v === 'true'; localStorage.setItem(TG_ENABLED_KEY, v); } }
+        };
+        let settingsDirty = false;
+        let settingsSyncInFlight = null;
+        let lastSettingsSyncAt = 0;
+
+        function loadSettingsMeta() {
+            try {
+                const m = JSON.parse(localStorage.getItem(SETTINGS_META_KEY) || '{}');
+                return m && typeof m === 'object' ? m : {};
+            } catch (e) {
+                return {};
+            }
+        }
+
+        function snapshotSyncedSettings() {
+            const snap = {};
+            Object.keys(SYNCED_SETTINGS).forEach(name => { snap[name] = SYNCED_SETTINGS[name].get(); });
+            return snap;
+        }
+
+        // Call after the person changed settings on this device: what differs from `before` becomes the newest version
+        function markSyncedSettingsChanged(before) {
+            const meta = loadSettingsMeta();
+            const now = Date.now();
+            let changed = false;
+            Object.keys(SYNCED_SETTINGS).forEach(name => {
+                if (SYNCED_SETTINGS[name].get() !== before[name]) {
+                    meta[name] = Math.max(now, (meta[name] || 0) + 1);
+                    changed = true;
+                }
+            });
+            if (!changed) return;
+            localStorage.setItem(SETTINGS_META_KEY, JSON.stringify(meta));
+            settingsDirty = true;
+        }
+
+        function getSettingsEndpoint() {
+            const ep = getCloudEndpoint();
+            if (!ep || ep.indexOf('/tasks.json') < 0) return null;
+            return ep.replace('/tasks.json', '/settings.json');
+        }
+
+        // Newest change wins; on a tie (e.g. never edited since this feature) a value in the cloud wins, so devices agree
+        function mergeSyncedSettings(remote) {
+            const meta = loadSettingsMeta();
+            const out = {};
+            let localChanged = false;
+            let remoteChanged = false;
+            Object.keys(SYNCED_SETTINGS).forEach(name => {
+                const f = SYNCED_SETTINGS[name];
+                const rv = remote && remote[name];
+                const r = rv && typeof rv.v === 'string' && typeof rv.at === 'number' ? rv : null;
+                const local = { v: f.get(), at: meta[name] || 0 };
+                let win;
+                if (!r || local.at > r.at) win = local;
+                else if (r.at > local.at) win = r;
+                else win = r.v ? r : local;
+                out[name] = { v: win.v, at: win.at };
+                if (win.v !== local.v) {
+                    f.set(win.v);
+                    localChanged = true;
+                }
+                meta[name] = win.at;
+                if (!r || r.v !== win.v || r.at !== win.at) remoteChanged = true;
+            });
+            localStorage.setItem(SETTINGS_META_KEY, JSON.stringify(meta));
+            return { out: out, localChanged: localChanged, remoteChanged: remoteChanged };
+        }
+
+        function maybeSyncSettings() {
+            if (settingsDirty || Date.now() - lastSettingsSyncAt > 30000) syncSettings();
+        }
+
+        function syncSettings() {
+            if (settingsSyncInFlight) return settingsSyncInFlight;
+            settingsSyncInFlight = (async () => {
+                const ep = getSettingsEndpoint();
+                if (!ep) return;
+                try {
+                    for (let attempt = 0; attempt < 3; attempt++) {
+                        const res = await fetchWithTimeout(ep, { headers: { 'X-Firebase-ETag': 'true' } }, 15000);
+                        if (!res.ok) return;
+                        const m = mergeSyncedSettings(await res.json());
+                        if (m.localChanged) updateAiStatusUI();
+                        if (!m.remoteChanged) break;
+                        const headers = { 'Content-Type': 'application/json' };
+                        const etag = res.headers.get('ETag');
+                        if (etag) headers['if-match'] = etag;
+                        const put = await fetchWithTimeout(ep, { method: 'PUT', headers: headers, body: JSON.stringify(m.out) }, 20000);
+                        if (put.status !== 412) {
+                            if (!put.ok) return;
+                            break;
+                        }
+                        // 412: another device saved settings first; read again and merge
+                    }
+                    settingsDirty = false;
+                    lastSettingsSyncAt = Date.now();
+                } catch (e) {
+                    // offline or blocked: settings stay on this device and go up with the next sync
+                } finally {
+                    settingsSyncInFlight = null;
+                }
+            })();
+            return settingsSyncInFlight;
         }
 
         function applyMergedTasks(mergedJson) {
@@ -5315,6 +5433,7 @@
             if (t) parts.push(`توکن ربات تلگرام (ربات ${t.split(':')[0]})`);
             if (c) parts.push(`شناسه چت ${c}`);
             if (!confirm(`این تنظیمات با QR رسید:\n- ${parts.join('\n- ')}\n\nفقط اگر همین الان خودت QR را از صفحه‌ی کامپیوترت اسکن کرده‌ای، OK بزن.`)) return;
+            const settingsBefore = snapshotSyncedSettings();
             if (s) {
                 cloudSyncSecret = s;
                 localStorage.setItem(CLOUD_SECRET_KEY, s);
@@ -5327,6 +5446,7 @@
                 tgChatId = c;
                 localStorage.setItem(TG_CHAT_ID_KEY, c);
             }
+            markSyncedSettingsChanged(settingsBefore);
             showToast('تنظیمات روی این دستگاه ذخیره شد.', 'success');
         }
 
@@ -5589,11 +5709,12 @@
             localStorage.setItem(SECURITY_HASH_KEY, securityHash);
             localStorage.removeItem(SECURITY_PWD_KEY);
             localStorage.removeItem(SECURITY_PUBLIC_PWD_KEY);
-            if (p.t && p.t !== tgBotToken) {
+            // The vault's Telegram settings are only a starting point: newer ones arrive with the settings sync
+            if (p.t && !tgBotToken) {
                 tgBotToken = p.t;
                 localStorage.setItem(TG_BOT_TOKEN_KEY, p.t);
             }
-            if (p.c && p.c !== tgChatId) {
+            if (p.c && !tgChatId) {
                 tgChatId = p.c;
                 localStorage.setItem(TG_CHAT_ID_KEY, p.c);
             }
@@ -5844,6 +5965,7 @@
                 localStorage.removeItem(SECURITY_PUBLIC_PWD_KEY);
             }
 
+            const settingsBefore = snapshotSyncedSettings();
             geminiApiKey = gKey;
             isSecurityEnabled = secEnabled;
             localStorage.setItem(GEMINI_KEY_STORAGE, gKey);
@@ -5861,6 +5983,7 @@
                 localStorage.setItem(TG_CHAT_ID_KEY, tgChat);
                 localStorage.setItem(TG_ENABLED_KEY, tgEn ? 'true' : 'false');
             }
+            markSyncedSettingsChanged(settingsBefore);
 
             if (secEnabled) {
                 sessionStorage.setItem(UNLOCKED_SESSION_KEY, 'true');
