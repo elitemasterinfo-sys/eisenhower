@@ -1,7 +1,7 @@
 // Service Worker for Eisenhower Matrix PWA
 // App files open from the cache at once and are refreshed in the background (fast start on a slow VPN, works offline).
 // Requests to other sites (Firebase, Telegram) are never touched.
-const CACHE_NAME = 'eisenhower-pwa-v7';
+const CACHE_NAME = 'eisenhower-pwa-v8';
 const STATIC_ASSETS = [
   './',
   './index.html',

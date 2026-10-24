@@ -2466,7 +2466,7 @@
     <div id="settingsModal" class="modal-bg">
         <div class="modal-box" style="max-width: 580px;">
             <div class="modal-header">
-                <span class="modal-title">⚙️ تنظیمات، فضای ابری و امنیت</span>
+                <span class="modal-title">⚙️ تنظیمات، فضای ابری و امنیت <small id="appVersionLabel" style="font-size: 0.7rem; font-weight: 500; color: var(--text-muted);" dir="ltr"></small></span>
                 <button class="close-btn" onclick="closeSettingsModal()">✕</button>
             </div>
 
@@ -2629,6 +2629,7 @@
                     <div style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.5;">
                         با فعال‌سازی این گزینه، با ثبت هر تسک یا یادداشت جدید در برنامه، یک پیام زیبا شامل عنوان، بخش و توضیحات بلافاصله به اکانت یا کانال تلگرام شما ارسال می‌شود تا همیشه در چت تلگرام شما آرشیو بماند.
                     </div>
+                    <div id="settingsSyncMsg" style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted); line-height: 1.5;"></div>
 
                     <div style="display: flex; flex-direction: column; gap: 6px;">
                         <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">توکن ربات تلگرام (Bot Token):</label>
@@ -2943,6 +2944,7 @@
         const VAULT_CACHE_KEY = 'eisenhower_vault'; // last vault.json seen, so the lock works offline and opens without a flash
         const VAULT_ITERATIONS = 600000;
         const SETTINGS_META_KEY = 'eisenhower_settings_meta'; // when each synced setting was last changed: { name: timestamp }
+        const APP_VERSION = 'v8 · 2026-10-24'; // shown in Settings, so it is easy to see which version a device runs
         const DEFAULT_CLOUD_URL = 'https://task-manager-c285d-default-rtdb.firebaseio.com';
         const APP_PUBLIC_URL = 'https://elitemasterinfo-sys.github.io/eisenhower/';
         const QUADS = ['q1', 'q2', 'q3', 'q4'];
@@ -2978,8 +2980,16 @@
                 }).catch(err => {
                     console.warn('PWA ServiceWorker registration error:', err);
                 });
+                // A new version took over: switch to it right away unless the person is typing or has a window open
                 navigator.serviceWorker.addEventListener('controllerchange', () => {
-                    if (hadController) showToast('نسخه‌ی تازه‌ی برنامه دریافت شد؛ دفعه‌ی بعد که باز کنی فعال است.', 'info');
+                    if (!hadController) return;
+                    const active = document.activeElement;
+                    const typing = active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) && active.id !== 'loginPassInput';
+                    if (!typing && !document.querySelector('.modal-bg.active')) {
+                        location.reload();
+                        return;
+                    }
+                    showToast('نسخه‌ی تازه‌ی برنامه دریافت شد؛ دفعه‌ی بعد که باز کنی فعال است.', 'info');
                 });
             });
         }
@@ -5090,6 +5100,18 @@
             return { out: out, localChanged: localChanged, remoteChanged: remoteChanged };
         }
 
+        function updateSettingsSyncUI() {
+            const el = document.getElementById('settingsSyncMsg');
+            if (!el) return;
+            if (lastSettingsSyncAt) {
+                el.innerText = `☁️ توکن و کلیدها با همه‌ی دستگاه‌ها همگام‌اند (${formatClock(lastSettingsSyncAt)}).`;
+            } else if (!getSettingsEndpoint() || !cloudSyncSecret) {
+                el.innerText = '⚠️ این دستگاه هنوز به پایگاه ابری وصل نیست؛ توکن و کلیدها فقط روی همین دستگاه‌اند.';
+            } else {
+                el.innerText = '🔄 توکن و کلیدها هنوز با پایگاه ابری همگام نشده‌اند...';
+            }
+        }
+
         function maybeSyncSettings() {
             if (settingsDirty || Date.now() - lastSettingsSyncAt > 30000) syncSettings();
         }
@@ -5122,6 +5144,7 @@
                     // offline or blocked: settings stay on this device and go up with the next sync
                 } finally {
                     settingsSyncInFlight = null;
+                    updateSettingsSyncUI();
                 }
             })();
             return settingsSyncInFlight;
@@ -5903,6 +5926,8 @@
             }
             updateSecurityNotice();
             updateVaultUI();
+            updateSettingsSyncUI();
+            document.getElementById('appVersionLabel').innerText = APP_VERSION;
             renderSnapshotList();
             updateCloudUI();
             document.getElementById('settingsModal').classList.add('active');
