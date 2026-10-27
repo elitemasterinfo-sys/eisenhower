@@ -2391,7 +2391,7 @@
                     </div>
 
                     <!-- Note Toolbar -->
-                    <div id="noteToolbar" class="note-toolbar">
+                    <div id="noteToolbar" class="note-toolbar" onmousedown="if (event.target.closest('.note-tool-btn')) event.preventDefault()">
                         <div class="note-toolbar-group">
                             <button type="button" class="note-tool-btn" onclick="insertNoteMarkdown('checklist')" title="افزودن مورد چک‌لیست">
                                 <span>☑️</span> <span>چک‌لیست</span>
@@ -2944,7 +2944,7 @@
         const VAULT_CACHE_KEY = 'eisenhower_vault'; // last vault.json seen, so the lock works offline and opens without a flash
         const VAULT_ITERATIONS = 600000;
         const SETTINGS_META_KEY = 'eisenhower_settings_meta'; // when each synced setting was last changed: { name: timestamp }
-        const APP_VERSION = 'v8 · 2026-10-24'; // shown in Settings, so it is easy to see which version a device runs
+        const APP_VERSION = 'v9 · 2026-10-27'; // shown in Settings, so it is easy to see which version a device runs
         const DEFAULT_CLOUD_URL = 'https://task-manager-c285d-default-rtdb.firebaseio.com';
         const APP_PUBLIC_URL = 'https://elitemasterinfo-sys.github.io/eisenhower/';
         const QUADS = ['q1', 'q2', 'q3', 'q4'];
@@ -3946,69 +3946,195 @@
             }
         }
 
+        // Line formats act on every line the cursor or selection touches; pressing the same button again removes it.
+        // The tests match the start of a line after its indentation, the same way parseMarkdownToHtml reads it.
+        const NOTE_LINE_FORMATS = {
+            checklist: { prefix: '- [ ] ', test: /^[-*]\s*\[[ xX]\]\s*/, placeholder: 'آیتم جدید چک‌لیست' },
+            h1: { prefix: '# ', test: /^#\s+/, placeholder: 'عنوان اصلی' },
+            h2: { prefix: '## ', test: /^##\s+/, placeholder: 'سرتیتر' },
+            bullet: { prefix: '- ', test: /^[-*•]\s+(?!\[[ xX]\])/, placeholder: 'مورد جدید' },
+            number: { prefix: '1. ', test: /^\d+\.\s+/, placeholder: 'مورد اول' },
+            quote: { prefix: '> ', test: /^>\s?/, placeholder: 'نکته و توضیح مهم...' }
+        };
+        // Any block prefix, so turning a bullet into a checklist replaces the dash instead of stacking two prefixes
+        const NOTE_ANY_LINE_PREFIX = /^(?:[-*]\s*\[[ xX]\]\s*|#{1,3}\s+|[-*•]\s+|\d+\.\s+|>\s?)/;
+
+        // Edits through the browser's own command, so Ctrl+Z still works and the note's input handlers run
+        function replaceNoteRange(textarea, from, to, text, selStart, selEnd) {
+            const before = textarea.value;
+            const expected = before.substring(0, from) + text + before.substring(to);
+            textarea.focus();
+            textarea.setSelectionRange(from, to);
+            try {
+                document.execCommand(text ? 'insertText' : 'delete', false, text);
+            } catch (e) {}
+            if (textarea.value !== expected) {
+                textarea.value = expected;
+                handleNoteInput(textarea);
+            }
+            textarea.setSelectionRange(selStart, selEnd);
+        }
+
+        function noteWordAround(text, pos) {
+            const isWordChar = ch => !!ch && /[\p{L}\p{N}_‌]/u.test(ch);
+            let s = pos;
+            let e = pos;
+            while (s > 0 && isWordChar(text[s - 1])) s--;
+            while (e < text.length && isWordChar(text[e])) e++;
+            return s < e ? [s, e] : null;
+        }
+
+        function applyNoteLineFormat(textarea, type) {
+            const fmt = NOTE_LINE_FORMATS[type];
+            const text = textarea.value;
+            const selStart = textarea.selectionStart;
+            let selEnd = textarea.selectionEnd;
+            // A selection that stops right after a line break does not take in the next line
+            if (selEnd > selStart && text[selEnd - 1] === '\n') selEnd--;
+            const from = text.lastIndexOf('\n', selStart - 1) + 1;
+            let to = text.indexOf('\n', selEnd);
+            if (to < 0) to = text.length;
+            const lines = text.substring(from, to).split('\n');
+            const split = l => {
+                const indent = l.match(/^[ \t]*/)[0];
+                return { indent: indent, rest: l.slice(indent.length) };
+            };
+            const filled = lines.filter(l => l.trim() !== '');
+
+            if (filled.length === 0) {
+                // Empty line: start an item with a selected placeholder, so typing replaces it
+                const line = fmt.prefix + fmt.placeholder;
+                replaceNoteRange(textarea, from, to, line, from + fmt.prefix.length, from + line.length);
+                return;
+            }
+
+            const removing = filled.every(l => fmt.test.test(split(l).rest));
+            let n = 0;
+            const result = lines.map(l => {
+                if (l.trim() === '') return l;
+                const p = split(l);
+                if (removing) return p.indent + p.rest.replace(fmt.test, '');
+                n++;
+                return p.indent + (type === 'number' ? n + '. ' : fmt.prefix) + p.rest.replace(NOTE_ANY_LINE_PREFIX, '');
+            }).join('\n');
+
+            if (lines.length === 1) {
+                // One line: the cursor or selection stays on the same text
+                const delta = result.length - lines[0].length;
+                const textStart = from + result.length - split(result).rest.replace(NOTE_ANY_LINE_PREFIX, '').length;
+                const clamp = x => Math.min(from + result.length, Math.max(textStart, x));
+                replaceNoteRange(textarea, from, to, result, clamp(selStart + delta), clamp(textarea.selectionEnd + delta));
+            } else {
+                replaceNoteRange(textarea, from, to, result, from, from + result.length);
+            }
+        }
+
+        function applyNoteInlineFormat(textarea, mark, placeholder) {
+            const text = textarea.value;
+            let start = textarea.selectionStart;
+            let end = textarea.selectionEnd;
+            if (start === end) {
+                // No selection: format the word under the cursor, or insert a selected placeholder
+                const w = noteWordAround(text, start);
+                if (!w) {
+                    replaceNoteRange(textarea, start, end, mark + placeholder + mark, start + mark.length, start + mark.length + placeholder.length);
+                    return;
+                }
+                start = w[0];
+                end = w[1];
+            }
+            // Spaces stay outside the marks: "**word **" would not show as bold
+            while (start < end && /\s/.test(text[start])) start++;
+            while (end > start && /\s/.test(text[end - 1])) end--;
+            if (start === end) return;
+            const sel = text.substring(start, end);
+            const m = mark.length;
+            const single = mark === '*';
+
+            // Already formatted, with the marks just outside or at the edges of the selection: remove them
+            const outside = text.substring(start - m, start) === mark && text.substring(end, end + m) === mark
+                && (!single || (text[start - 2] !== '*' && text[end + 1] !== '*'));
+            if (outside) {
+                replaceNoteRange(textarea, start - m, end + m, sel, start - m, end - m);
+                return;
+            }
+            const inside = sel.length > 2 * m && sel.startsWith(mark) && sel.endsWith(mark)
+                && (!single || (!sel.startsWith('**') && !sel.endsWith('**')));
+            if (inside) {
+                const inner = sel.slice(m, -m);
+                replaceNoteRange(textarea, start, end, inner, start, start + inner.length);
+                return;
+            }
+
+            // Each line separately (marks never span a line break), with any list or heading prefix kept outside
+            const wrapped = sel.split('\n').map(line => {
+                const p = line.match(/^([ \t]*)(.*?)([ \t]*)$/);
+                const pre = (p[2].match(NOTE_ANY_LINE_PREFIX) || [''])[0];
+                const body = p[2].slice(pre.length);
+                return body ? p[1] + pre + mark + body + mark + p[3] : line;
+            }).join('\n');
+            replaceNoteRange(textarea, start, end, wrapped, start, start + wrapped.length);
+        }
+
+        function applyNoteLink(textarea) {
+            const text = textarea.value;
+            let start = textarea.selectionStart;
+            let end = textarea.selectionEnd;
+            if (start === end) {
+                const w = noteWordAround(text, start);
+                if (w) {
+                    start = w[0];
+                    end = w[1];
+                }
+            }
+            let title = text.substring(start, end).replace(/\s*\n\s*/g, ' ').trim();
+            const selectedUrl = /^(https?:\/\/|www\.)\S+$/i.test(title) ? title : '';
+
+            let url = prompt('آدرس اینترنتی (URL) را وارد کنید:', selectedUrl || 'https://');
+            if (url === null) return;
+            url = url.trim();
+            if (!url || /^https?:\/\/$/i.test(url)) return;
+            if (/\s/.test(url)) {
+                showToast('آدرس لینک نباید فاصله داشته باشد.', 'error');
+                return;
+            }
+            if (!/^https?:\/\//i.test(url)) url = 'https://' + url.replace(/^\/+/, '');
+            // Parentheses would end the markdown link early
+            url = url.replace(/\(/g, '%28').replace(/\)/g, '%29');
+
+            if (!title || title === selectedUrl) {
+                const asked = prompt('عنوان لینک (خالی بگذاری، خود آدرس نوشته می‌شود):', '');
+                title = (asked || '').trim() || url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+            }
+            title = title.replace(/[\[\]]/g, '');
+            const link = `[${title}](${url})`;
+            replaceNoteRange(textarea, start, end, link, start + link.length, start + link.length);
+        }
+
+        // The divider goes under the current line and never replaces selected text
+        function insertNoteDivider(textarea) {
+            const text = textarea.value;
+            let lineEnd = text.indexOf('\n', textarea.selectionEnd);
+            if (lineEnd < 0) lineEnd = text.length;
+            const lineStart = text.lastIndexOf('\n', lineEnd - 1) + 1;
+            const lineEmpty = text.substring(lineStart, lineEnd).trim() === '';
+            const atEnd = lineEnd >= text.length;
+            const insert = (lineEmpty ? '' : '\n') + '---' + (atEnd ? '\n' : '');
+            const caret = lineEnd + insert.length + (atEnd ? 0 : 1);
+            replaceNoteRange(textarea, lineEnd, lineEnd, insert, caret, caret);
+        }
+
         function insertNoteMarkdown(type) {
             const textarea = document.getElementById('editTaskNoteInput');
             if (!textarea) return;
 
             switchNoteMode('edit');
 
-            const start = textarea.selectionStart;
-            const end = textarea.selectionEnd;
-            const text = textarea.value;
-            const selectedText = text.substring(start, end);
-
-            let replacement = '';
-            let newCursorPos = start;
-
-            switch (type) {
-                case 'checklist':
-                    replacement = (start > 0 && text[start - 1] !== '\n' ? '\n' : '') + '- [ ] ' + (selectedText || 'آیتم جدید چک‌لیست') + '\n';
-                    newCursorPos = start + replacement.length - 1;
-                    break;
-                case 'link':
-                    const url = prompt('آدرس اینترنتی (URL) را وارد کنید:', 'https://');
-                    if (!url) return;
-                    const linkTitle = selectedText || prompt('عنوان لینک:', 'پیوند') || 'پیوند';
-                    replacement = `[${linkTitle}](${url})`;
-                    newCursorPos = start + replacement.length;
-                    break;
-                case 'h1':
-                    replacement = (start > 0 && text[start - 1] !== '\n' ? '\n' : '') + '# ' + (selectedText || 'عنوان اصلی') + '\n';
-                    newCursorPos = start + replacement.length - 1;
-                    break;
-                case 'h2':
-                    replacement = (start > 0 && text[start - 1] !== '\n' ? '\n' : '') + '## ' + (selectedText || 'سرتیتر') + '\n';
-                    newCursorPos = start + replacement.length - 1;
-                    break;
-                case 'bold':
-                    replacement = `**${selectedText || 'متن ضخیم'}**`;
-                    newCursorPos = start + replacement.length;
-                    break;
-                case 'italic':
-                    replacement = `*${selectedText || 'متن مورب'}*`;
-                    newCursorPos = start + replacement.length;
-                    break;
-                case 'bullet':
-                    replacement = (start > 0 && text[start - 1] !== '\n' ? '\n' : '') + '- ' + (selectedText || 'مورد جدید') + '\n';
-                    newCursorPos = start + replacement.length - 1;
-                    break;
-                case 'number':
-                    replacement = (start > 0 && text[start - 1] !== '\n' ? '\n' : '') + '1. ' + (selectedText || 'مورد اول') + '\n';
-                    newCursorPos = start + replacement.length - 1;
-                    break;
-                case 'quote':
-                    replacement = (start > 0 && text[start - 1] !== '\n' ? '\n' : '') + '> ' + (selectedText || 'نکته و توضیح مهم...') + '\n';
-                    newCursorPos = start + replacement.length - 1;
-                    break;
-                case 'divider':
-                    replacement = '\n---\n';
-                    newCursorPos = start + replacement.length;
-                    break;
-            }
-
-            textarea.value = text.substring(0, start) + replacement + text.substring(end);
-            textarea.focus();
-            textarea.setSelectionRange(newCursorPos, newCursorPos);
+            if (NOTE_LINE_FORMATS[type]) applyNoteLineFormat(textarea, type);
+            else if (type === 'bold') applyNoteInlineFormat(textarea, '**', 'متن ضخیم');
+            else if (type === 'italic') applyNoteInlineFormat(textarea, '*', 'متن مورب');
+            else if (type === 'link') applyNoteLink(textarea);
+            else if (type === 'divider') insertNoteDivider(textarea);
             updateNoteCharCount();
         }
 
